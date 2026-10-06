@@ -1,0 +1,33 @@
+/* Foco Psicológico · tokens de marca (foco_2026). Generado por exportar_entrega.py — no editar a mano. */
+@font-face { font-family: "Poppins"; src: url("fuentes/poppins-400.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Poppins"; src: url("fuentes/poppins-500.woff2") format("woff2"); font-weight: 500; font-display: swap; }
+@font-face { font-family: "Poppins"; src: url("fuentes/poppins-600.woff2") format("woff2"); font-weight: 600; font-display: swap; }
+@font-face { font-family: "Poppins"; src: url("fuentes/poppins-700.woff2") format("woff2"); font-weight: 700; font-display: swap; }
+@font-face { font-family: "Recoleta"; src: url("fuentes/recoleta-regular.otf") format("opentype"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Recoleta"; src: url("fuentes/recoleta-semibold.otf") format("opentype"); font-weight: 600; font-display: swap; }
+:root {
+  --foco-noche: #26304B;
+  --foco-ciruela: #5B3B64;
+  --foco-durazno: #ECB69A;
+  --foco-papel: #F5F0EA;
+  --foco-salvia-clara: #B7D0B3;
+  --foco-salvia: #8EA68C;
+  --foco-primario: #ECB69A;
+  --foco-primario-profundo: #5B3B64;
+  --foco-secundario: #B7D0B3;
+  --foco-acento: #8EA68C;
+  --foco-acento-suave: #EFE6EC;
+  --foco-fondo: #F5F0EA;
+  --foco-superficie: #FFFFFF;
+  --foco-texto: #2A2530;
+  --foco-texto-suave: #5C5560;
+  --foco-agua: #9DA9C2;
+  --foco-ynsa: #8EA68C;
+  --foco-ynsa-suave: #E2EBDF;
+  --foco-ldc: #ECB69A;
+  --foco-ldc-suave: #F8E5DA;
+  --foco-ado: #26304B;
+  --foco-ado-suave: #DDE1EB;
+  --foco-font-titulos: 'Recoleta', 'Fraunces', Georgia, serif;
+  --foco-font-texto: 'Poppins', 'DM Sans', system-ui, sans-serif;
+}
