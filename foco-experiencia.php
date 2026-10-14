@@ -12,6 +12,9 @@ define( 'FOCO_EXP_URL', content_url( 'foco-experiencia' ) );
 // Medición (píxel de Meta). Lo mantiene el agente programador web: fuente en Agente-Programador-web/wordpress/foco-pixel.php.
 if ( file_exists( __DIR__ . '/foco-pixel.php' ) ) { require_once __DIR__ . '/foco-pixel.php'; }
 
+// Personas, agenda y reservas (fase 1: pago por Bre-B o PayPal, confirmado a mano). Ajustes en Escritorio › Foco › Ajustes.
+if ( file_exists( __DIR__ . '/foco-servidor.php' ) ) { require_once __DIR__ . '/foco-servidor.php'; }
+
 function foco_exp_version() {
 	$v = @file_get_contents( FOCO_EXP_DIR . '/VERSION' );
 	return $v ? trim( $v ) : '0';
