@@ -37,12 +37,20 @@ function foco_ajustes() {
 		'horas_pago'     => 24,
 		'ical_url'       => '',
 		'videollamada'   => '',
+		'wompi'          => '',
+		'wompi_pub'      => '',
+		'wompi_integ'    => '',
+		'wompi_eventos'  => '',
 	);
 	$o = get_option( 'foco_ajustes', array() );
 	return array_merge( $def, is_array( $o ) ? $o : array() );
 }
 function foco_ajuste( $k ) { $a = foco_ajustes(); return isset( $a[ $k ] ) ? $a[ $k ] : ''; }
 function foco_reservas_activas() { return foco_ajuste( 'reservas' ) === '1'; }
+/** Wompi listo: activado y con las tres llaves. Modo prueba si la llave pública empieza por pub_test_. */
+function foco_wompi_activo() { $a = foco_ajustes(); return '1' === $a['wompi'] && $a['wompi_pub'] && $a['wompi_integ'] && $a['wompi_eventos']; }
+function foco_wompi_prueba() { return 0 === strpos( (string) foco_ajuste( 'wompi_pub' ), 'pub_test_' ); }
+function foco_wompi_api() { return foco_wompi_prueba() ? 'https://sandbox.wompi.co/v1' : 'https://production.wompi.co/v1'; }
 
 /** Horario base y precios publicados con la experiencia (los deja preparar_despliegue.py). */
 function foco_datos() {
@@ -69,6 +77,8 @@ function foco_config_publica() {
 			'breb_nota'    => $a['breb_nota'],
 			'paypal_me'    => $a['paypal_me'],
 			'horas'        => (int) $a['horas_pago'],
+			'wompi'        => foco_wompi_activo(),
+			'wompi_prueba' => foco_wompi_activo() && foco_wompi_prueba(),
 		),
 	);
 }
@@ -360,6 +370,87 @@ function foco_horarios_libres( $minutos ) {
 }
 
 /* =========================================================================================================
+ * Precio: lo calcula el servidor con las mismas tablas de la web (foco-datos.json), nunca lo decide el navegador.
+ * ======================================================================================================= */
+
+/** Devuelve [valor, moneda] o WP_Error. Espejo de cotizar() en app/src/lib/precios.ts. */
+function foco_precio( $p ) {
+	$d = foco_datos();
+	if ( empty( $d['precios'] ) ) { return new WP_Error( 'foco_precios', 'Faltan los precios en el servidor.', array( 'status' => 500 ) ); }
+	$pr = $d['precios'];
+	$m  = isset( $p['moneda'] ) && 'USD' === $p['moneda'] ? 'USD' : 'COP';
+	$camino = isset( $p['camino'] ) ? $p['camino'] : 'exploracion';
+	$v = null;
+	if ( 'programa' === $camino ) {
+		$id = isset( $p['programa'] ) ? $p['programa'] : '';
+		if ( ! isset( $pr['programas'][ $id ] ) ) { return new WP_Error( 'foco_programa', 'Programa no válido.', array( 'status' => 400 ) ); }
+		$m = isset( $d['moneda_programa'][ $id ] ) ? $d['moneda_programa'][ $id ] : $m;
+		$t = $pr['programas'][ $id ][ $m ];
+		$plan = isset( $p['plan'] ) ? $p['plan'] : 'unico';
+		if ( 'base' === $plan ) { $v = isset( $t['base'] ) ? $t['base'] : $t['modulo'] * 2; }
+		elseif ( in_array( $plan, array( 'unico', 'dos_pagos', 'modulo' ), true ) ) { $v = $t[ $plan ]; }
+	} elseif ( 'consulta' === $camino ) {
+		$mod = isset( $p['modalidad'] ) && 'presencial' === $p['modalidad'] ? 'presencial' : 'virtual';
+		$paq = isset( $p['paquete'] ) && in_array( (string) $p['paquete'], array( '1', '2', '4' ), true ) ? (string) $p['paquete'] : '1';
+		$v = isset( $pr['terapia'][ $mod ][ $paq ][ $m ] ) ? $pr['terapia'][ $mod ][ $paq ][ $m ] : null;
+	} else {
+		$op = isset( $p['exploracion'] ) ? $p['exploracion'] : 'individual';
+		$clave = isset( $d['exploracion'][ $op ] ) ? $d['exploracion'][ $op ] : 'valoracion';
+		if ( 'familia' === $op ) { $m = 'COP'; }
+		if ( isset( $pr[ $clave ][ $m ] ) ) { $v = $pr[ $clave ][ $m ]; } elseif ( isset( $pr[ $clave ]['COP'] ) ) { $v = $pr[ $clave ]['COP']; $m = 'COP'; }
+	}
+	if ( ! $v ) { return new WP_Error( 'foco_valor', 'No encontré el precio de lo que elegiste.', array( 'status' => 400 ) ); }
+	return array( (int) $v, $m );
+}
+
+/* =========================================================================================================
+ * Wompi (fase 2): checkout web con firma de integridad y confirmación por evento (webhook)
+ * ======================================================================================================= */
+
+/** URL del checkout de Wompi para una reserva. Cada intento lleva su propia referencia (REF-1, REF-2…). */
+function foco_wompi_url( $id ) {
+	$a = foco_ajustes();
+	$n = (int) get_post_meta( $id, 'foco_intentos', true ) + 1;
+	update_post_meta( $id, 'foco_intentos', $n );
+	$ref = get_post_meta( $id, 'foco_ref', true ) . '-' . $n;
+	$cents = (int) get_post_meta( $id, 'foco_valor', true ) * 100;
+	$exp = (int) get_post_meta( $id, 'foco_expira', true );
+	$expira = gmdate( 'Y-m-d\TH:i:s.000\Z', $exp );
+	$firma = hash( 'sha256', $ref . $cents . 'COP' . $expira . $a['wompi_integ'] );
+	$q = array(
+		'public-key' => $a['wompi_pub'], 'currency' => 'COP', 'amount-in-cents' => $cents, 'reference' => $ref, 'signature:integrity' => $firma,
+		'expiration-time' => $expira, 'redirect-url' => add_query_arg( 'foco_pago', get_post_meta( $id, 'foco_ref', true ), home_url( '/' ) ),
+		'customer-data:email' => get_post_meta( $id, 'foco_email', true ), 'customer-data:full-name' => get_post_meta( $id, 'foco_nombre', true ),
+	);
+	$tel = foco_digitos( get_post_meta( $id, 'foco_wa', true ) );
+	if ( 0 === strpos( $tel, '57' ) && strlen( $tel ) === 12 ) { $q['customer-data:phone-number'] = substr( $tel, 2 ); $q['customer-data:phone-number-prefix'] = '+57'; }
+	return 'https://checkout.wompi.co/p/?' . http_build_query( $q, '', '&', PHP_QUERY_RFC3986 );
+}
+
+function foco_reserva_por_ref( $ref ) {
+	$ref = preg_replace( '/^(FOCO-[A-Z0-9]{6})-\d+$/', '$1', strtoupper( (string) $ref ) );
+	$q = get_posts( array( 'post_type' => 'foco_reserva', 'post_status' => 'private', 'numberposts' => 1, 'fields' => 'ids', 'meta_key' => 'foco_ref', 'meta_value' => $ref ) );
+	return $q ? (int) $q[0] : 0;
+}
+
+/** Aplica una transacción de Wompi a su reserva. Solo confirma si está APPROVED y el valor coincide. */
+function foco_wompi_aplicar( $tx, $via ) {
+	if ( empty( $tx['reference'] ) ) { return 0; }
+	$id = foco_reserva_por_ref( $tx['reference'] );
+	if ( ! $id ) { return 0; }
+	$log = (array) get_post_meta( $id, 'foco_wompi', true );
+	$log[] = array( 'tx' => isset( $tx['id'] ) ? $tx['id'] : '', 'estado' => isset( $tx['status'] ) ? $tx['status'] : '', 'medio' => isset( $tx['payment_method_type'] ) ? $tx['payment_method_type'] : '', 'via' => $via, 'en' => current_time( 'mysql' ) );
+	update_post_meta( $id, 'foco_wompi', array_slice( $log, -20 ) );
+	$esperado = (int) get_post_meta( $id, 'foco_valor', true ) * 100;
+	if ( isset( $tx['status'] ) && 'APPROVED' === $tx['status'] && (int) $tx['amount_in_cents'] === $esperado && 'COP' === $tx['currency'] ) {
+		if ( 'confirmada' !== get_post_meta( $id, 'foco_estado', true ) ) {
+			foco_confirmar_reserva( $id, 'Wompi (' . ( isset( $tx['payment_method_type'] ) ? $tx['payment_method_type'] : '' ) . ')' );
+		}
+	}
+	return $id;
+}
+
+/* =========================================================================================================
  * Reservas
  * ======================================================================================================= */
 
@@ -381,6 +472,11 @@ function foco_referencia_nueva() {
 	return $r;
 }
 
+/** Enlace estable para (re)abrir el pago de Wompi desde el correo: pasa por la API, que genera un intento nuevo y redirige. */
+function foco_api_url_pago( $ref, $email ) {
+	return add_query_arg( array( 'ref' => $ref, 'k' => substr( hash_hmac( 'sha256', $ref . strtolower( $email ), wp_salt( 'auth' ) ), 0, 20 ), 'ir' => 1 ), rest_url( 'foco/v1/pago' ) );
+}
+
 /** Instrucciones de pago según la moneda: Bre-B en pesos; PayPal (o enlace por WhatsApp) en dólares. */
 function foco_instrucciones_pago( $valor, $moneda, $ref ) {
 	$a = foco_ajustes();
@@ -395,6 +491,30 @@ function foco_instrucciones_pago( $valor, $moneda, $ref ) {
 	return array( 'metodo' => 'breb', 'llave' => $a['breb_llave'], 'titular' => $a['breb_titular'], 'nota' => $a['breb_nota'] );
 }
 
+/** Confirma una reserva y avisa a la persona (y a JuanDa si la confirmó Wompi). Se usa desde el Escritorio y desde Wompi. */
+function foco_confirmar_reserva( $id, $por ) {
+	update_post_meta( $id, 'foco_estado', 'confirmada' );
+	update_post_meta( $id, 'foco_pagado_en', current_time( 'mysql' ) );
+	update_post_meta( $id, 'foco_confirmado_por', $por );
+	$ref = get_post_meta( $id, 'foco_ref', true ); $nombre = get_post_meta( $id, 'foco_nombre', true ); $email = get_post_meta( $id, 'foco_email', true );
+	$ini = (int) get_post_meta( $id, 'foco_inicio', true ); $fin = $ini + 60 * (int) get_post_meta( $id, 'foco_minutos', true );
+	$concepto = get_post_meta( $id, 'foco_concepto', true );
+	$video = trim( (string) foco_ajuste( 'videollamada' ) );
+	$filas = array( 'Referencia' => esc_html( $ref ), 'Sesión' => esc_html( $concepto ), 'Cuándo' => esc_html( foco_fecha_larga( $ini ) ) );
+	if ( $video ) { $filas['Videollamada'] = '<a href="' . esc_url( $video ) . '">' . esc_html( $video ) . '</a>'; }
+	foco_correo( $email, 'Tu cita en Foco está confirmada · ' . $ref,
+		'<p>Hola, ' . esc_html( strtok( $nombre, ' ' ) ) . '. Recibí tu pago: tu cita quedó confirmada.</p>' . ( $video ? '' : '<p>Un día antes te envío el enlace de la videollamada.</p>' ),
+		$filas, array( 'Agregar a mi calendario', foco_enlace_calendario( $ini, $fin, 'Sesión en Foco Psicológico', $video ? 'Videollamada: ' . $video : 'Te envío el enlace de la videollamada un día antes.' ) ),
+		'Si necesitas mover la cita, escríbeme y la reagendamos. El WhatsApp no es una línea de crisis: en una emergencia busca las líneas de atención de tu país.' );
+	if ( 0 === strpos( $por, 'Wompi' ) ) {
+		foco_correo( foco_ajuste( 'email_avisos' ), 'Pago aprobado por Wompi: ' . $nombre . ' · ' . foco_fecha_larga( $ini ),
+			'<p>La cita quedó confirmada sola. No tienes que hacer nada en WordPress.</p>',
+			array( 'Referencia' => esc_html( $ref ), 'Sesión' => esc_html( $concepto ), 'Cuándo' => esc_html( foco_fecha_larga( $ini ) ), 'Valor' => esc_html( foco_dinero( get_post_meta( $id, 'foco_valor', true ), 'COP' ) ), 'Medio' => esc_html( $por ) ),
+			array( 'Ver reservas', admin_url( 'edit.php?post_type=foco_reserva' ) ),
+			'<a href="' . esc_url( foco_enlace_calendario( $ini, $fin, 'Foco · ' . $nombre . ' (' . $ref . ')', $concepto ) ) . '">Agregar a mi Google Calendar</a>' );
+	}
+}
+
 /* =========================================================================================================
  * API (REST): /wp-json/foco/v1/…
  * ======================================================================================================= */
@@ -403,6 +523,8 @@ add_action( 'rest_api_init', function () {
 	register_rest_route( 'foco/v1', '/lead', array( 'methods' => 'POST', 'callback' => 'foco_api_lead', 'permission_callback' => '__return_true' ) );
 	register_rest_route( 'foco/v1', '/horarios', array( 'methods' => 'GET', 'callback' => 'foco_api_horarios', 'permission_callback' => '__return_true' ) );
 	register_rest_route( 'foco/v1', '/reservas', array( 'methods' => 'POST', 'callback' => 'foco_api_reserva', 'permission_callback' => '__return_true' ) );
+	register_rest_route( 'foco/v1', '/pago', array( 'methods' => 'GET', 'callback' => 'foco_api_pago', 'permission_callback' => '__return_true' ) );
+	register_rest_route( 'foco/v1', '/wompi', array( 'methods' => 'POST', 'callback' => 'foco_api_wompi', 'permission_callback' => '__return_true' ) );
 } );
 
 function foco_validar_persona( $p ) {
@@ -458,11 +580,14 @@ function foco_api_reserva( WP_REST_Request $req ) {
 	$d = foco_validar_persona( $p );
 	if ( is_wp_error( $d ) ) { return $d; }
 	if ( ! $d['email'] || strlen( foco_digitos( $d['whatsapp'] ) ) < 7 ) { return new WP_Error( 'foco_contacto', 'Para reservar necesito tu correo y tu WhatsApp.', array( 'status' => 400 ) ); }
-	$moneda = isset( $p['moneda'] ) && 'USD' === $p['moneda'] ? 'USD' : 'COP';
-	$valor  = isset( $p['valor'] ) ? (int) $p['valor'] : 0;
-	$min    = max( 30, min( 120, isset( $p['minutos'] ) ? (int) $p['minutos'] : 60 ) );
 	$camino = isset( $p['camino'] ) && in_array( $p['camino'], array( 'exploracion', 'consulta', 'programa' ), true ) ? $p['camino'] : 'exploracion';
-	if ( $valor <= 0 || $valor > ( 'USD' === $moneda ? 5000 : 20000000 ) ) { return new WP_Error( 'foco_valor', 'Revisa el valor de la reserva.', array( 'status' => 400 ) ); }
+	$p['camino'] = $camino;
+	$precio = foco_precio( $p );
+	if ( is_wp_error( $precio ) ) { return $precio; }
+	list( $valor, $moneda ) = $precio;
+	if ( isset( $p['valor'] ) && (int) $p['valor'] !== $valor ) { return new WP_Error( 'foco_precio_cambio', 'El precio se actualizó. Recarga la página para ver el valor vigente.', array( 'status' => 409 ) ); }
+	$metodo = 'COP' === $moneda && isset( $p['metodo'] ) && 'wompi' === $p['metodo'] && foco_wompi_activo() ? 'wompi' : ( 'COP' === $moneda ? 'breb' : 'paypal' );
+	$min    = max( 30, min( 120, isset( $p['minutos'] ) ? (int) $p['minutos'] : 60 ) );
 	try { $ini = ( new DateTime( (string) ( isset( $p['inicio'] ) ? $p['inicio'] : '' ) ) )->getTimestamp(); } catch ( Exception $e ) { $ini = 0; }
 	if ( ! $ini ) { return new WP_Error( 'foco_hora', 'Elige un horario.', array( 'status' => 400 ) ); }
 
@@ -486,18 +611,22 @@ function foco_api_reserva( WP_REST_Request $req ) {
 	if ( is_wp_error( $id ) ) { delete_transient( $bloqueo ); return new WP_Error( 'foco_guardar', 'No pude guardar la reserva.', array( 'status' => 500 ) ); }
 	$meta = array( 'foco_ref' => $ref, 'foco_estado' => 'pendiente', 'foco_persona' => $persona, 'foco_inicio' => $ini, 'foco_minutos' => $min, 'foco_expira' => $expira,
 		'foco_valor' => $valor, 'foco_moneda' => $moneda, 'foco_camino' => $camino, 'foco_concepto' => $concepto, 'foco_detalle' => $detalle,
-		'foco_programa' => $d['programa'], 'foco_nombre' => $d['nombre'], 'foco_email' => $d['email'], 'foco_wa' => $d['whatsapp'], 'foco_pais' => foco_txt( $d['pais'], 40 ), 'foco_utm' => $d['utm'] );
+		'foco_metodo' => $metodo, 'foco_programa' => $d['programa'], 'foco_nombre' => $d['nombre'], 'foco_email' => $d['email'], 'foco_wa' => $d['whatsapp'], 'foco_pais' => foco_txt( $d['pais'], 40 ), 'foco_utm' => $d['utm'] );
 	foreach ( $meta as $k => $v ) { update_post_meta( $id, $k, $v ); }
 	delete_transient( $bloqueo );
 
 	$pago = foco_instrucciones_pago( $valor, $moneda, $ref );
+	if ( 'wompi' === $metodo ) { $pago = array( 'metodo' => 'wompi', 'enlace' => foco_wompi_url( $id ), 'texto' => 'Paga con tarjeta, PSE, Nequi o botón Bancolombia.' ); }
 	$cuando = foco_fecha_larga( $ini ); $vence = foco_fecha_larga( $expira );
 	$monto = foco_dinero( $valor, $moneda );
 	$waComprobante = foco_wa( foco_whatsapp_foco(), 'Hola, envío el comprobante de mi reserva ' . $ref . ' (' . $monto . ').' );
 
 	// Correo a la persona: cómo pagar.
 	$filas = array( 'Referencia' => esc_html( $ref ), 'Sesión' => esc_html( $concepto ), 'Cuándo' => esc_html( $cuando ), 'Valor' => esc_html( $monto ) );
-	if ( 'breb' === $pago['metodo'] ) {
+	if ( 'wompi' === $pago['metodo'] ) {
+		$intro = '<p>Hola, ' . esc_html( strtok( $d['nombre'], ' ' ) ) . '. Tu horario quedó apartado.</p><p>Si no alcanzaste a pagar, puedes hacerlo con tarjeta, PSE, Nequi o botón Bancolombia antes del <b>' . esc_html( $vence ) . '</b>. Si ya pagaste, te llega la confirmación en un momento.</p>';
+		$boton = array( 'Pagar ahora', foco_api_url_pago( $ref, $d['email'] ) );
+	} elseif ( 'breb' === $pago['metodo'] ) {
 		$filas['Paga a la llave Bre-B'] = esc_html( $pago['llave'] ?: 'Te la envío por WhatsApp' );
 		if ( $pago['titular'] ) { $filas['A nombre de'] = esc_html( $pago['titular'] ); }
 		$intro = '<p>Hola, ' . esc_html( strtok( $d['nombre'], ' ' ) ) . '. Tu horario quedó apartado.</p><p>Para confirmarlo, haz la transferencia por Bre-B antes del <b>' . esc_html( $vence ) . '</b> y envíame el comprobante por WhatsApp. ' . esc_html( $pago['nota'] ) . '</p>';
@@ -519,6 +648,64 @@ function foco_api_reserva( WP_REST_Request $req ) {
 
 	return array( 'ok' => true, 'referencia' => $ref, 'expira' => ( new DateTime( '@' . $expira ) )->setTimezone( foco_tz() )->format( 'c' ), 'vence_texto' => $vence,
 		'pago' => $pago + array( 'valor' => $valor, 'moneda' => $moneda, 'whatsapp' => $waComprobante ) );
+}
+
+/**
+ * GET foco/v1/pago
+ *  - ?ref=FOCO-XXXX&id=TX  → al volver de Wompi: consulta la transacción en Wompi y devuelve el estado de la reserva.
+ *  - ?ref=FOCO-XXXX&k=…&ir=1 → enlace del correo: abre un intento de pago nuevo en Wompi (si la reserva sigue pendiente).
+ */
+function foco_api_pago( WP_REST_Request $req ) {
+	$ref = strtoupper( foco_txt( $req->get_param( 'ref' ), 40 ) );
+	$id  = foco_reserva_por_ref( $ref );
+	if ( ! $id ) { return new WP_Error( 'foco_ref', 'No encontré esa reserva.', array( 'status' => 404 ) ); }
+	if ( $req->get_param( 'ir' ) ) {
+		$k = substr( hash_hmac( 'sha256', $ref . strtolower( get_post_meta( $id, 'foco_email', true ) ), wp_salt( 'auth' ) ), 0, 20 );
+		if ( ! hash_equals( $k, (string) $req->get_param( 'k' ) ) || ! foco_wompi_activo() ) { return new WP_Error( 'foco_enlace', 'Enlace no válido.', array( 'status' => 403 ) ); }
+		$destino = 'pendiente' === foco_estado_reserva( $id ) ? foco_wompi_url( $id ) : add_query_arg( 'foco_pago', $ref, home_url( '/' ) );
+		wp_redirect( $destino ); exit;
+	}
+	$tx_id = foco_txt( $req->get_param( 'id' ), 60 );
+	if ( $tx_id && foco_wompi_activo() && 'confirmada' !== get_post_meta( $id, 'foco_estado', true ) ) {
+		$r = wp_remote_get( foco_wompi_api() . '/transactions/' . rawurlencode( $tx_id ), array( 'timeout' => 12 ) );
+		if ( ! is_wp_error( $r ) && 200 === wp_remote_retrieve_response_code( $r ) ) {
+			$j = json_decode( wp_remote_retrieve_body( $r ), true );
+			if ( isset( $j['data'] ) && foco_reserva_por_ref( $j['data']['reference'] ) === $id ) { foco_wompi_aplicar( $j['data'], 'retorno' ); }
+		}
+	}
+	$estado = foco_estado_reserva( $id );
+	$log = (array) get_post_meta( $id, 'foco_wompi', true );
+	$ultimo = $log ? end( $log ) : array();
+	$ini = (int) get_post_meta( $id, 'foco_inicio', true );
+	$out = array( 'referencia' => $ref, 'estado' => $estado, 'wompi' => isset( $ultimo['estado'] ) ? $ultimo['estado'] : '', 'cuando' => foco_fecha_larga( $ini ),
+		'concepto' => get_post_meta( $id, 'foco_concepto', true ), 'valor' => (int) get_post_meta( $id, 'foco_valor', true ), 'moneda' => get_post_meta( $id, 'foco_moneda', true ) );
+	if ( 'confirmada' === $estado ) {
+		$out['calendario'] = foco_enlace_calendario( $ini, $ini + 60 * (int) get_post_meta( $id, 'foco_minutos', true ), 'Sesión en Foco Psicológico', 'Te envío el enlace de la videollamada un día antes.' );
+	} elseif ( 'pendiente' === $estado && foco_wompi_activo() && 'wompi' === get_post_meta( $id, 'foco_metodo', true ) ) {
+		$out['reintentar'] = foco_api_url_pago( $ref, get_post_meta( $id, 'foco_email', true ) );
+	}
+	$res = new WP_REST_Response( $out ); $res->header( 'Cache-Control', 'no-store' );
+	return $res;
+}
+
+/** POST foco/v1/wompi — eventos de Wompi. Verifica la firma (checksum) antes de tocar nada. */
+function foco_api_wompi( WP_REST_Request $req ) {
+	$e = $req->get_json_params();
+	$secreto = (string) foco_ajuste( 'wompi_eventos' );
+	if ( ! is_array( $e ) || ! $secreto || empty( $e['signature']['properties'] ) || ! isset( $e['timestamp'] ) ) { return new WP_Error( 'foco_evento', 'Evento no válido.', array( 'status' => 400 ) ); }
+	$cadena = '';
+	foreach ( (array) $e['signature']['properties'] as $prop ) {
+		$v = isset( $e['data'] ) ? $e['data'] : array();
+		foreach ( explode( '.', (string) $prop ) as $k ) { $v = is_array( $v ) && array_key_exists( $k, $v ) ? $v[ $k ] : ''; }
+		$cadena .= is_scalar( $v ) ? (string) $v : '';
+	}
+	$cadena .= $e['timestamp'] . $secreto;
+	$recibido = strtolower( (string) ( isset( $e['signature']['checksum'] ) ? $e['signature']['checksum'] : $req->get_header( 'x_event_checksum' ) ) );
+	if ( ! hash_equals( hash( 'sha256', $cadena ), $recibido ) ) { return new WP_Error( 'foco_firma', 'Firma no válida.', array( 'status' => 401 ) ); }
+	$esperado = foco_wompi_prueba() ? 'test' : 'prod';
+	if ( isset( $e['environment'] ) && $e['environment'] !== $esperado ) { return array( 'ok' => true, 'ignorado' => 'ambiente' ); }
+	if ( isset( $e['event'] ) && 'transaction.updated' === $e['event'] && ! empty( $e['data']['transaction'] ) ) { foco_wompi_aplicar( $e['data']['transaction'], 'evento' ); }
+	return array( 'ok' => true );
 }
 
 /* =========================================================================================================
@@ -603,23 +790,8 @@ add_action( 'admin_post_foco_reserva', function () {
 	if ( ! $id || ! current_user_can( 'edit_post', $id ) || 'foco_reserva' !== get_post_type( $id ) ) { wp_die( 'Sin permiso.' ); }
 	check_admin_referer( 'foco_reserva_' . $id );
 	$hacer = isset( $_GET['hacer'] ) ? sanitize_key( $_GET['hacer'] ) : '';
-	$ref = get_post_meta( $id, 'foco_ref', true );
-	$nombre = get_post_meta( $id, 'foco_nombre', true );
-	$email = get_post_meta( $id, 'foco_email', true );
-	$ini = (int) get_post_meta( $id, 'foco_inicio', true );
-	$fin = $ini + 60 * (int) get_post_meta( $id, 'foco_minutos', true );
-	$concepto = get_post_meta( $id, 'foco_concepto', true );
 	if ( 'confirmar' === $hacer ) {
-		update_post_meta( $id, 'foco_estado', 'confirmada' );
-		update_post_meta( $id, 'foco_pagado_en', current_time( 'mysql' ) );
-		update_post_meta( $id, 'foco_confirmado_por', get_current_user_id() );
-		$video = trim( (string) foco_ajuste( 'videollamada' ) );
-		$filas = array( 'Referencia' => esc_html( $ref ), 'Sesión' => esc_html( $concepto ), 'Cuándo' => esc_html( foco_fecha_larga( $ini ) ) );
-		if ( $video ) { $filas['Videollamada'] = '<a href="' . esc_url( $video ) . '">' . esc_html( $video ) . '</a>'; }
-		foco_correo( $email, 'Tu cita en Foco está confirmada · ' . $ref,
-			'<p>Hola, ' . esc_html( strtok( $nombre, ' ' ) ) . '. Recibí tu pago: tu cita quedó confirmada.</p>' . ( $video ? '' : '<p>Un día antes te envío el enlace de la videollamada.</p>' ),
-			$filas, array( 'Agregar a mi calendario', foco_enlace_calendario( $ini, $fin, 'Sesión en Foco Psicológico', $video ? 'Videollamada: ' . $video : 'Te envío el enlace de la videollamada un día antes.' ) ),
-			'Si necesitas mover la cita, escríbeme y la reagendamos. El WhatsApp no es una línea de crisis: en una emergencia busca las líneas de atención de tu país.' );
+		foco_confirmar_reserva( $id, 'Escritorio: ' . wp_get_current_user()->display_name );
 	} elseif ( 'cancelar' === $hacer ) {
 		update_post_meta( $id, 'foco_estado', 'cancelada' );
 	}
@@ -670,6 +842,11 @@ add_action( 'admin_init', function () {
 			'horas_pago'   => max( 2, min( 72, (int) ( isset( $v['horas_pago'] ) ? $v['horas_pago'] : 24 ) ) ),
 			'ical_url'     => esc_url_raw( trim( isset( $v['ical_url'] ) ? $v['ical_url'] : '' ), array( 'https' ) ),
 			'videollamada' => esc_url_raw( trim( isset( $v['videollamada'] ) ? $v['videollamada'] : '' ), array( 'https' ) ),
+			'wompi'        => ! empty( $v['wompi'] ) ? '1' : '',
+			'wompi_pub'    => preg_replace( '/[^A-Za-z0-9_]/', '', isset( $v['wompi_pub'] ) ? $v['wompi_pub'] : '' ),
+			// Los secretos no se muestran: si el campo llega vacío se conserva el guardado.
+			'wompi_integ'  => ( isset( $v['wompi_integ'] ) && '' !== trim( $v['wompi_integ'] ) ) ? preg_replace( '/[^A-Za-z0-9_]/', '', $v['wompi_integ'] ) : foco_ajuste( 'wompi_integ' ),
+			'wompi_eventos'=> ( isset( $v['wompi_eventos'] ) && '' !== trim( $v['wompi_eventos'] ) ) ? preg_replace( '/[^A-Za-z0-9_]/', '', $v['wompi_eventos'] ) : foco_ajuste( 'wompi_eventos' ),
 		);
 	} ) );
 } );
@@ -698,6 +875,16 @@ function foco_admin_ajustes() {
 	$campo( 'breb_titular', 'A nombre de', 'Como aparece en el banco, para que la persona confirme que paga a la cuenta correcta.' );
 	$campo( 'breb_nota', 'Nota de pago', 'Una línea corta. Ej.: «Desde Nequi, Bancolombia o cualquier banco, con Bre-B».' );
 	$campo( 'paypal_me', 'Usuario de PayPal.me (dólares, opcional)', 'Solo el usuario: de paypal.me/<b>focopsicologico</b> escribe «focopsicologico». Si lo dejas vacío, a quien paga en dólares le dices que le envías el enlace por WhatsApp.' );
+	echo '</table><h2>Wompi (tarjeta, PSE, Nequi y botón Bancolombia)</h2>';
+	echo '<p>En Wompi › <b>Desarrolladores</b> encuentras estas llaves. La <b>URL de eventos</b> que debes pegar en Wompi es:<br><code>' . esc_html( rest_url( 'foco/v1/wompi' ) ) . '</code></p>';
+	echo '<table class="form-table" role="presentation">';
+	$campo( 'wompi_pub', 'Llave pública', 'Empieza por <b>pub_prod_</b> (real) o <b>pub_test_</b> (pruebas).' );
+	$secreto = function ( $k, $etq, $ayuda ) use ( $a ) {
+		echo '<tr><th scope="row"><label for="foco_' . esc_attr( $k ) . '">' . esc_html( $etq ) . '</label></th><td><input class="regular-text" type="password" id="foco_' . esc_attr( $k ) . '" name="foco_ajustes[' . esc_attr( $k ) . ']" value="" autocomplete="new-password" placeholder="' . ( $a[ $k ] ? '•••••••• guardado (déjalo vacío para no cambiarlo)' : '' ) . '"><p class="description">' . wp_kses( $ayuda, array( 'b' => array() ) ) . '</p></td></tr>';
+	};
+	$secreto( 'wompi_integ', 'Secreto de integridad', 'En Wompi: «Secretos para integración técnica» › <b>Integridad</b>. Es privado: pégalo solo aquí.' );
+	$secreto( 'wompi_eventos', 'Secreto de eventos', 'En Wompi: «Secretos para integración técnica» › <b>Eventos</b>. Es privado: pégalo solo aquí.' );
+	$campo( 'wompi', 'Activar Wompi en la web', 'Solo se activa si las tres llaves están guardadas.' . ( foco_wompi_activo() ? '<br><b>✓ Wompi activo' . ( foco_wompi_prueba() ? ' en MODO PRUEBA (no cobra de verdad)' : '' ) . '.</b>' : '' ), 'checkbox' );
 	echo '</table><h2>Avisos</h2><table class="form-table" role="presentation">';
 	$campo( 'email_avisos', 'Correo donde te llegan los avisos', '', 'email' );
 	echo '</table>';

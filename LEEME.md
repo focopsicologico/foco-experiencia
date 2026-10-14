@@ -4,4 +4,4 @@ Esta carpeta la genera `Agente-prototipo-web/execution/preparar_despliegue.py`. 
 Hostinger la copia sola a `public_html/wp-content/foco-experiencia/` cada vez que se hace *push* a `main`.
 WordPress la carga con el mu-plugin `foco-cargador.php` y la muestra en la portada y en `/experiencia/`.
 
-Versión actual: **2.4-202610140235**
+Versión actual: **2.5-202610140304**

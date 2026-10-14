@@ -50,5 +50,149 @@
   "par": "Programa para parejas",
   "fmq": "Familias que migran",
   "hqh": "Hombres que hablan"
+ },
+ "moneda_programa": {
+  "ynsa": "COP",
+  "ldc": "USD",
+  "ado": "COP",
+  "par": "COP",
+  "fmq": "USD",
+  "hqh": "COP"
+ },
+ "exploracion": {
+  "individual": "valoracion",
+  "familia": "valoracion",
+  "pareja": "valoracion_pareja",
+  "familia_migra": "valoracion_migra"
+ },
+ "precios": {
+  "valoracion": {
+   "COP": 150000,
+   "USD": 55,
+   "minutos": 80
+  },
+  "programas": {
+   "ynsa": {
+    "estado": "Borrador",
+    "COP": {
+     "modulo": 700000,
+     "unico": 2500000,
+     "dos_pagos": 1300000
+    },
+    "USD": {
+     "modulo": 245,
+     "unico": 860,
+     "dos_pagos": 450
+    }
+   },
+   "ldc": {
+    "estado": "Borrador",
+    "COP": {
+     "modulo": 700000,
+     "unico": 2500000,
+     "dos_pagos": 1300000
+    },
+    "USD": {
+     "modulo": 245,
+     "unico": 860,
+     "dos_pagos": 450
+    }
+   },
+   "ado": {
+    "estado": "Borrador",
+    "COP": {
+     "modulo": 520000,
+     "unico": 1850000,
+     "dos_pagos": 950000
+    },
+    "USD": {
+     "modulo": 180,
+     "unico": 640,
+     "dos_pagos": 330
+    }
+   },
+   "par": {
+    "estado": "Borrador",
+    "COP": {
+     "modulo": 900000,
+     "unico": 3300000,
+     "dos_pagos": 1700000
+    },
+    "USD": {
+     "modulo": 310,
+     "unico": 1135,
+     "dos_pagos": 585
+    }
+   },
+   "fmq": {
+    "estado": "Borrador",
+    "COP": {
+     "modulo": 700000,
+     "unico": 2500000,
+     "dos_pagos": 1300000,
+     "base": 1350000
+    },
+    "USD": {
+     "modulo": 245,
+     "unico": 860,
+     "dos_pagos": 450,
+     "base": 465
+    }
+   },
+   "hqh": {
+    "estado": "Borrador",
+    "COP": {
+     "modulo": 700000,
+     "unico": 2500000,
+     "dos_pagos": 1300000
+    },
+    "USD": {
+     "modulo": 245,
+     "unico": 860,
+     "dos_pagos": 450
+    }
+   }
+  },
+  "terapia": {
+   "virtual": {
+    "1": {
+     "COP": 110000,
+     "USD": 40
+    },
+    "2": {
+     "COP": 210000,
+     "USD": 75
+    },
+    "4": {
+     "COP": 400000,
+     "USD": 140
+    }
+   },
+   "presencial": {
+    "1": {
+     "COP": 140000,
+     "USD": 50
+    },
+    "2": {
+     "COP": 270000,
+     "USD": 95
+    },
+    "4": {
+     "COP": 520000,
+     "USD": 180
+    }
+   }
+  },
+  "valoracion_familia": {
+   "COP": 130000
+  },
+  "valoracion_pareja": {
+   "COP": 250000,
+   "USD": 90
+  },
+  "valoracion_migra": {
+   "COP": 150000,
+   "USD": 55
+  }
  }
 }
