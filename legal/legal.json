@@ -1,0 +1,42 @@
+{
+  "_nota": "FUENTE ÚNICA de los textos legales cortos (casillas) y de las versiones de los documentos. La usan la experiencia (React) y el servidor (foco-legal.php, que la lee de legal/legal.json). Si cambias un documento en execution/plantillas/despliegue/legal/*.html, sube su «version» y su «vigencia» aquí.",
+  "documentos": {
+    "terminos": { "titulo": "Términos y condiciones", "ruta": "/terminos", "version": "1.0", "vigencia": "2026-11-20" },
+    "privacidad": { "titulo": "Política de privacidad y tratamiento de datos", "ruta": "/privacidad", "version": "1.0", "vigencia": "2026-11-20" },
+    "cookies": { "titulo": "Política de cookies", "ruta": "/cookies", "version": "1.0", "vigencia": "2026-11-20" },
+    "reembolsos": { "titulo": "Política de cancelaciones y reembolsos", "ruta": "/reembolsos", "version": "1.0", "vigencia": "2026-11-20" }
+  },
+  "casillas": {
+    "terminos": {
+      "antes": "He leído y acepto los ",
+      "enlace": "Términos y condiciones",
+      "medio": ", que incluyen la ",
+      "enlace2": "Política de cancelaciones y reembolsos",
+      "despues": ".",
+      "error": "Para seguir, marca la casilla de Términos y condiciones."
+    },
+    "privacidad": {
+      "antes": "Autorizo a Foco Psicológico a tratar mis datos personales, incluidos los datos de salud que yo decida compartir, para las finalidades de la ",
+      "enlace": "Política de privacidad",
+      "despues": ". Sé que compartir datos sensibles es opcional.",
+      "error": "Para seguir, marca la casilla de la Política de privacidad."
+    },
+    "contacto": {
+      "texto": "Opcional: quiero que Foco me escriba por WhatsApp o correo con contenidos y novedades. Puedo retirarlo cuando quiera."
+    }
+  },
+  "aviso_formulario": "Solo pido los datos necesarios. Lo que escribes en los juegos y en tus guías se queda en tu dispositivo.",
+  "cookies": {
+    "version": "1.0",
+    "titulo": "Cookies en Foco",
+    "texto": "Uso cookies necesarias para que la web funcione. Con tu permiso, también uso el píxel de Meta para saber qué anuncios te trajeron aquí. No se activa hasta que lo aceptes.",
+    "aceptar": "Aceptar",
+    "rechazar": "Rechazar",
+    "configurar": "Configurar",
+    "guardar": "Guardar mi elección",
+    "necesarias": "Necesarias",
+    "necesarias_texto": "Hacen que la web funcione y recuerdan tu elección y tu progreso en este dispositivo. Siempre activas.",
+    "medicion": "Medición y publicidad (Meta)",
+    "medicion_texto": "El píxel de Meta registra visitas y acciones (por ejemplo, abrir un juego o agendar) para medir y mejorar los anuncios. Nunca recibe lo que escribes ni tus datos de contacto."
+  }
+}

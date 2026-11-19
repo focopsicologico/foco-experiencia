@@ -534,7 +534,9 @@ function foco_validar_persona( $p ) {
 	$wa     = isset( $p['whatsapp'] ) ? foco_txt( $p['whatsapp'], 30 ) : '';
 	if ( mb_strlen( $nombre ) < 2 ) { return new WP_Error( 'foco_nombre', 'Escribe tu nombre.', array( 'status' => 400 ) ); }
 	if ( ! $email && strlen( foco_digitos( $wa ) ) < 7 ) { return new WP_Error( 'foco_contacto', 'Déjame un WhatsApp o un correo.', array( 'status' => 400 ) ); }
-	if ( empty( $p['consentimiento'] ) ) { return new WP_Error( 'foco_consentimiento', 'Falta tu autorización de datos.', array( 'status' => 400 ) ); }
+	// Dos casillas separadas y obligatorias: Términos (con reembolsos) y Privacidad. Ver foco-legal.php.
+	if ( function_exists( 'foco_legal_validar' ) ) { $ok = foco_legal_validar( $p ); if ( is_wp_error( $ok ) ) { return $ok; } }
+	elseif ( empty( $p['consentimiento'] ) ) { return new WP_Error( 'foco_consentimiento', 'Falta tu autorización de datos.', array( 'status' => 400 ) ); }
 	$prog = isset( $p['programa'] ) && in_array( $p['programa'], FOCO_PROGRAMAS, true ) ? $p['programa'] : '';
 	return array( 'nombre' => $nombre, 'email' => $email, 'whatsapp' => $wa, 'programa' => $prog, 'pais' => isset( $p['pais'] ) ? $p['pais'] : '',
 		'contacto' => array_key_exists( 'contacto', $p ) ? ! empty( $p['contacto'] ) : null, 'consentimiento_texto' => isset( $p['consentimiento_texto'] ) ? $p['consentimiento_texto'] : '', 'utm' => foco_utm( isset( $p['utm'] ) ? $p['utm'] : array() ) );
@@ -548,6 +550,7 @@ function foco_api_lead( WP_REST_Request $req ) {
 	$d['origen'] = isset( $p['origen'] ) && in_array( $p['origen'], FOCO_ORIGENES, true ) ? $p['origen'] : 'contacto';
 	list( $id, $nueva ) = foco_guardar_persona( $d );
 	if ( ! $id ) { return new WP_Error( 'foco_guardar', 'No pude guardar tus datos.', array( 'status' => 500 ) ); }
+	if ( function_exists( 'foco_registrar_consentimientos' ) ) { foco_registrar_consentimientos( 'lead_' . $d['origen'], $p, $id, '', $d ); }
 	if ( $nueva ) {
 		$filas = array( 'Nombre' => esc_html( $d['nombre'] ), 'Llegó por' => esc_html( foco_nombre_origen( $d['origen'] ) ) );
 		if ( $d['programa'] ) { $filas['Le interesa'] = esc_html( foco_nombre_programa( $d['programa'] ) ); }
@@ -614,6 +617,7 @@ function foco_api_reserva( WP_REST_Request $req ) {
 		'foco_metodo' => $metodo, 'foco_programa' => $d['programa'], 'foco_nombre' => $d['nombre'], 'foco_email' => $d['email'], 'foco_wa' => $d['whatsapp'], 'foco_pais' => foco_txt( $d['pais'], 40 ), 'foco_utm' => $d['utm'] );
 	foreach ( $meta as $k => $v ) { update_post_meta( $id, $k, $v ); }
 	delete_transient( $bloqueo );
+	if ( function_exists( 'foco_registrar_consentimientos' ) ) { foco_registrar_consentimientos( 'reserva', $p, $persona, $ref, $d ); }
 
 	$pago = foco_instrucciones_pago( $valor, $moneda, $ref );
 	if ( 'wompi' === $metodo ) { $pago = array( 'metodo' => 'wompi', 'enlace' => foco_wompi_url( $id ), 'texto' => 'Paga con tarjeta, PSE, Nequi o botón Bancolombia.' ); }

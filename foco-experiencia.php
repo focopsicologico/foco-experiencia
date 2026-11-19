@@ -9,6 +9,9 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 define( 'FOCO_EXP_DIR', __DIR__ );
 define( 'FOCO_EXP_URL', content_url( 'foco-experiencia' ) );
 
+// Documentos legales, registro de consentimientos, banner de cookies y solicitudes de reembolso.
+if ( file_exists( FOCO_EXP_DIR . '/foco-legal.php' ) ) { require_once FOCO_EXP_DIR . '/foco-legal.php'; }
+
 // Medición (píxel de Meta). Fuente: foco-pixel.php en el repositorio (lo mantiene el agente programador web).
 if ( file_exists( FOCO_EXP_DIR . '/foco-pixel.php' ) ) { require_once FOCO_EXP_DIR . '/foco-pixel.php'; }
 

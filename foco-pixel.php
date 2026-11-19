@@ -20,6 +20,9 @@
  *  6. Cualquier clic a un enlace de WhatsApp de Foco cuenta como «Contact» (Marketing: requisitos-tracking-web.md §3), en toda
  *     la web, salvo en las pantallas reservadas. Los WhatsApp de líneas de ayuda de terceros NO cuentan.
  *  7. Etiqueta de verificación de dominio de Meta, si se define FOCO_META_DOMINIO_VERIFICACION.
+ *  8. CONSENTIMIENTO (nov-2026): nada sale hacia Meta ni se descarga fbevents.js hasta que la persona acepta
+ *     «Medición y publicidad» en el banner de cookies (foco-legal.php, clave localStorage «foco_cookies»).
+ *     Lo que la app intente enviar antes se descarta (no se guarda en cola). Si después rechaza, se revoca.
  */
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 // Guardia contra doble carga. Ojo: no usar function_exists() aquí; PHP declara las funciones de este archivo antes de ejecutarlo.
@@ -37,7 +40,12 @@ function foco_pixel_js() {
 	return <<<'JS'
 (function (w, d) {
   if (w.fbq || w.__focoPixel) { return; }
-  var ID = '__ID__', WA = '__WA__';
+  var ID = '__ID__', WA = '__WA__', CV = '__CV__';
+  var activo = false, cargado = false;
+  function consentido() {
+    try { var v = JSON.parse(w.localStorage.getItem('foco_cookies') || 'null');
+      return !!(v && v.v === CV && v.medicion && (Date.now() - Date.parse(v.fecha)) < 365 * 864e5); } catch (e) { return false; }
+  }
   var registro = w.__focoPixel = { id: ID, enviados: [], descartados: [] };
 
   // Eventos que SÍ pueden salir hacia Meta. «Purchase» queda fuera a propósito: hoy los pagos son de ejemplo y,
@@ -62,6 +70,7 @@ function foco_pixel_js() {
   // Código base de Meta (cola hasta que cargue fbevents.js), con el filtro como puerta de entrada.
   var n = function () {
     var a = Array.prototype.slice.call(arguments), cmd = a[0], ev = a[1];
+    if (!activo) { anotar(registro.descartados, 'sin-consentimiento:' + String(cmd) + ':' + String(ev)); return; }
     if (cmd === 'consent') { crudo(a); return; }
     if (cmd === 'track' && PERMITIDOS[ev]) {
       if (ev === 'Contact') { // un clic a WhatsApp lo ven dos vigilantes (este y la app): que cuente una sola vez
@@ -86,6 +95,7 @@ function foco_pixel_js() {
   var ultima = null;
   function pantalla() { return (w.location.hash || '').replace(/^#/, ''); }
   function pageview() {
+    if (!activo) { return; }
     var clave = w.location.pathname + '#' + pantalla();
     if (clave === ultima) { return; }
     ultima = clave;
@@ -94,14 +104,31 @@ function foco_pixel_js() {
     crudo(['track', 'PageView']);
   }
 
-  crudo(['set', 'autoConfig', false, ID]);   // Meta no lee formularios ni botones, ni hace coincidencia avanzada automática
-  crudo(['init', ID]);
-  pageview();
-
-  // Quien llega directo a un juego o programa (#juego-maleta, #programa-ldc, #para-lejos) se salta la bienvenida,
-  // que es donde la app envía ViewContent. Se manda aquí, una sola vez, con el nombre del juego/programa.
-  var m = /^#(juego|programa|para)-([A-Za-z0-9-]+)$/.exec(w.location.hash || '');
-  if (m && limpio(m[1] + '-' + m[2])) { n('track', 'ViewContent', { content_name: m[1] + '-' + m[2] }); }
+  // Solo con consentimiento: se inicia el píxel y se descarga la librería de Meta.
+  function activar() {
+    if (activo) { return; }
+    activo = true;
+    if (!cargado) {
+      cargado = true;
+      crudo(['set', 'autoConfig', false, ID]);   // Meta no lee formularios ni botones, ni hace coincidencia avanzada automática
+      crudo(['init', ID]);
+      var t = d.createElement('script');
+      t.async = true; t.src = 'https://connect.facebook.net/en_US/fbevents.js';
+      var s = d.getElementsByTagName('script')[0];
+      if (s && s.parentNode) { s.parentNode.insertBefore(t, s); } else { d.head.appendChild(t); }
+    } else {
+      crudo(['consent', 'grant']);
+    }
+    ultima = null;
+    pageview();
+    // Quien llega directo a un juego o programa (#juego-maleta, #programa-ldc, #para-lejos) se salta la bienvenida,
+    // que es donde la app envía ViewContent. Se manda aquí, una sola vez, con el nombre del juego/programa.
+    var m = /^#(juego|programa|para)-([A-Za-z0-9-]+)$/.exec(w.location.hash || '');
+    if (m && limpio(m[1] + '-' + m[2])) { n('track', 'ViewContent', { content_name: m[1] + '-' + m[2] }); }
+  }
+  function desactivar() { if (!activo) { return; } crudo(['consent', 'revoke']); activo = false; }
+  w.addEventListener('foco:cookies', function () { if (consentido()) { activar(); } else { desactivar(); } });
+  if (consentido()) { activar(); }
 
   // Clic a cualquier enlace de WhatsApp de Foco = Contact (también en el resto del sitio, no solo en la experiencia).
   d.addEventListener('click', function (e) {
@@ -118,11 +145,6 @@ function foco_pixel_js() {
   });
   w.addEventListener('hashchange', pageview);
   w.addEventListener('popstate', pageview);
-
-  var t = d.createElement('script');
-  t.async = true; t.src = 'https://connect.facebook.net/en_US/fbevents.js';
-  var s = d.getElementsByTagName('script')[0];
-  if (s && s.parentNode) { s.parentNode.insertBefore(t, s); } else { d.head.appendChild(t); }
 })(window, document);
 JS;
 }
@@ -135,6 +157,7 @@ function foco_pixel_imprimir() {
 		echo '<meta name="facebook-domain-verification" content="' . esc_attr( $verif ) . '" />' . "\n";
 	}
 	$wa = preg_replace( '/\D/', '', (string) FOCO_WHATSAPP_NUMERO );
-	echo "<script>\n" . str_replace( array( '__ID__', '__WA__' ), array( $id, $wa ), foco_pixel_js() ) . "\n</script>\n";
+	$cv = function_exists( 'foco_legal_cookies_version' ) ? preg_replace( '/[^0-9.]/', '', foco_legal_cookies_version() ) : '1.0';
+	echo "<script>\n" . str_replace( array( '__ID__', '__WA__', '__CV__' ), array( $id, $wa, $cv ), foco_pixel_js() ) . "\n</script>\n";
 }
 add_action( 'wp_head', 'foco_pixel_imprimir', 1 );
