@@ -9,6 +9,9 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 define( 'FOCO_EXP_DIR', __DIR__ );
 define( 'FOCO_EXP_URL', content_url( 'foco-experiencia' ) );
 
+// Medición (píxel de Meta). Fuente: foco-pixel.php en el repositorio (lo mantiene el agente programador web).
+if ( file_exists( FOCO_EXP_DIR . '/foco-pixel.php' ) ) { require_once FOCO_EXP_DIR . '/foco-pixel.php'; }
+
 // Servidor: personas, agenda, reservas y pagos (menú «Foco» en wp-admin). Reservas apagadas hasta activarlas en Ajustes.
 if ( file_exists( FOCO_EXP_DIR . '/foco-servidor.php' ) ) { require_once FOCO_EXP_DIR . '/foco-servidor.php'; }
 
